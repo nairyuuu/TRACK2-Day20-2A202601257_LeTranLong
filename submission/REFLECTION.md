@@ -108,6 +108,8 @@ Inference token generation (decode phase) là bài toán bị nghẽn hoàn toà
 
 Trên CPU Ryzen 7 5700U, bộ nhớ hệ thống DDR4 dual-channel chỉ đạt băng thông thực tế ~38 GB/s chia sẻ giữa 8 cores và các tiến trình OS, dẫn đến tốc độ decode kịch trần ở mức 11.1 tok/s. Khi bật `-ngl 99`, toàn bộ 26 transformer layers được chuyển hoàn toàn vào VRAM của NVIDIA GeForce RTX 2060. Với băng thông bộ nhớ GDDR6 lên tới **336 GB/s** (gấp gần 9x CPU bus) kết hợp cùng 1920 CUDA cores và Tensor Cores chuyên dụng, thời gian streaming trọng số mỗi step giảm mạnh, mang lại bước nhảy vọt **9.49x speedup** thực tế.
 
+Đặc biệt, do GPU RTX 2060 này kết nối qua giao tiếp **PCIe 3.0 x4** (băng thông tối đa chỉ ~3.94 GB/s), việc offload một phần (Partial Offload) sẽ phải chịu chi phí trung chuyển cực lớn qua bus hẹp này. Chỉ khi **Full Offload** (`-ngl 99`), việc giao tiếp qua bus PCIe 3.0 x4 trong decode loop mới bị loại bỏ hoàn toàn, giải phóng toàn bộ băng thông 336 GB/s của GDDR6.
+
 ---
 
 ## 6. Bonus  *(optional — tối đa 20 điểm)*
@@ -127,13 +129,13 @@ speedup: 9.49x
 
 **Điều này nói lên gì mà deck chưa nói:**
 
-Sweep GPU layer offload từ `-ngl 0` đến `99` làm lộ rõ chi phí "phạt" của Partial Offload: `-ngl 8` đạt 15.6 tok/s, `-ngl 16` đạt 19.4 tok/s, `-ngl 24` đạt 26.5 tok/s, `-ngl 32` đạt 53.5 tok/s. Khi offload dở dang, activations phải liên tục trung chuyển qua lại giữa host RAM và VRAM qua bus PCIe ở mỗi layer biên giới, biến bus PCIe thành điểm nghẽn nghiêm trọng. Chỉ khi đạt mốc Full Offload (khi toàn bộ 26 layers nằm trọn trong 6 GB VRAM), latency trao đổi PCIe hoàn toàn biến mất và hiệu năng tăng vọt phi tuyến tính lên 105.1 tok/s.
+Sweep GPU layer offload từ `-ngl 0` đến `99` làm lộ rõ chi phí "phạt" cực lớn của Partial Offload trên giao tiếp **PCIe 3.0 x4 (~3.94 GB/s)**: `-ngl 8` đạt 15.6 tok/s, `-ngl 16` đạt 19.4 tok/s, `-ngl 24` đạt 26.5 tok/s, `-ngl 32` đạt 53.5 tok/s. Khi offload dở dang, activations và tensor biên giới phải liên tục đồng bộ qua bus PCIe 3.0 x4 chỉ có ~3.94 GB/s (chậm hơn 85 lần so với GDDR6). Chỉ khi đạt mốc Full Offload (khi toàn bộ 26 layers nằm trọn trong 6 GB VRAM), latency trung chuyển PCIe biến mất hoàn toàn và hiệu năng tăng vọt phi tuyến tính lên 105.1 tok/s.
 
 ---
 
 ## 7. Điều làm bạn ngạc nhiên nhất  *(optional)*
 
-Bản `UD-Q2_K_XL` (2-bit) lại decode chậm hơn bản `UD-Q4_K_XL` (4-bit) tới 11% trên GPU rời, minh chứng rằng lượng bit nhỏ hơn chỉ mang lại lợi thế tốc độ khi bộ nhớ là điểm nghẽn duy nhất; khi băng thông VRAM đã đủ lớn, chi phí giải nén bit lẻ (dequantization overhead) sẽ chiếm ưu thế và làm chậm quá trình tính toán.
+Ảnh hưởng khổng lồ của PCIe 3.0 x4: khi offload dở dang, đường truyền 3.94 GB/s kìm hãm GPU khiến tốc độ tăng rất chậm; nhưng khi toàn bộ 26 layers nằm trọn trong VRAM, GPU decode trực tiếp trên bus GDDR6 336 GB/s giúp tốc độ tăng vọt lên 105.1 tok/s mà không còn bị nghẽn bởi bus PCIe. Đồng thời, bản `UD-Q2_K_XL` (2-bit) lại decode chậm hơn bản 4-bit 11% do chi phí dequantize bit lẻ trên CUDA cores.
 
 ---
 
